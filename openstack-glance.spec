@@ -1,45 +1,45 @@
 Name:             openstack-glance
-Version:          2011.3.1
-Release:          3%{?dist}
+Version:          2013.1
+Release:          0.3.g3%{?dist}
 Summary:          OpenStack Image Service
 
 Group:            Applications/System
 License:          ASL 2.0
 URL:              http://glance.openstack.org
-Source0:          http://launchpad.net/glance/diablo/%{version}/+download/glance-%{version}.tar.gz
+Source0:          https://launchpad.net/glance/grizzly/grizzly-3/+download/glance-2013.1.g3.tar.gz
 Source1:          openstack-glance-api.init
+Source100:        openstack-glance-api.upstart
 Source2:          openstack-glance-registry.init
+Source200:        openstack-glance-registry.upstart
 Source3:          openstack-glance.logrotate
 
 #
-# Patches managed here: https://github.com/markmc/glance/tree/fedora-patches
+# patches_base=2013.1.g3
 #
-#   $> git format-patch -N 2011.3.1
-#   $> for p in 00*.patch; do filterdiff -x '*/.gitignore' -x '*/.mailmap' -x '*/Authors' -x '*/.bzrignore' $p | sponge $p; done
-#   $> for p in 00*.patch; do echo "Patch${p:2:2}:          $p"; done
-#   $> for p in 00*.patch; do echo "%patch${p:2:2} -p1"; done
-#
-
-# These are from stable/diablo
-
-# These are fedora specific
-Patch01:          0001-Always-reference-the-glance-module-from-the-package-.patch
-Patch02:          0002-Don-t-access-the-net-while-building-docs.patch
+Patch0001: 0001-Don-t-access-the-net-while-building-docs.patch
 
 # EPEL specific
 Patch100:         openstack-glance-newdeps.patch
+Patch101:         crypto.random.patch
 
 BuildArch:        noarch
 BuildRequires:    python2-devel
 BuildRequires:    python-setuptools
-BuildRequires:    python-distutils-extra
 BuildRequires:    intltool
+# These are required to build due to the requirements check added
+BuildRequires:    python-paste-deploy1.5
+BuildRequires:    python-routes1.12
+BuildRequires:    python-sqlalchemy0.7
+BuildRequires:    python-webob1.0
 
 Requires(post):   chkconfig
 Requires(preun):  initscripts
 Requires(preun):  chkconfig
 Requires(pre):    shadow-utils
 Requires:         python-glance = %{version}-%{release}
+Requires:         python-glanceclient >= 1:0
+Requires:         openstack-utils
+BuildRequires:    openstack-utils
 
 %description
 OpenStack Image Service (code-named Glance) provides discovery, registration,
@@ -56,25 +56,26 @@ This package contains the API and registry servers.
 Summary:          Glance Python libraries
 Group:            Applications/System
 
+Requires:         MySQL-python
+Requires:         pysendfile
 Requires:         python-eventlet
-Requires:         python-kombu
-Requires:         python-paste-deploy
-Requires:         python-routes
+Requires:         python-httplib2
+Requires:         python-iso8601
+Requires:         python-jsonschema
+Requires:         python-migrate
+Requires:         python-paste-deploy1.5
+Requires:         python-routes1.12
 Requires:         python-sqlalchemy0.7
 Requires:         python-webob1.0
-Requires:         python-setuptools
-Requires:         python-httplib2
-Requires:         python-migrate
 Requires:         python-crypto
+Requires:         pyxattr
+Requires:         python-swiftclient
+Requires:         python-oslo-config
 
-#
-# The image cache requires this http://pypi.python.org/pypi/xattr
-# but Fedora's python-xattr is http://pyxattr.sourceforge.net/
-#
-# The cache is disabled by default, so it's only an issue if you
-# enabled it
-#
-Requires:         python-xattr
+#test deps: python-mox python-nose python-requests
+#test and optional store:
+#ceph - glance.store.rdb
+#python-boto - glance.store.s3
 
 %description -n   python-glance
 OpenStack Image Service (code-named Glance) provides discovery, registration,
@@ -93,12 +94,7 @@ BuildRequires:    graphviz
 
 # Required to build module documents
 BuildRequires:    python-boto
-BuildRequires:    python-daemon
 BuildRequires:    python-eventlet
-BuildRequires:    python-gflags
-BuildRequires:    python-routes
-BuildRequires:    python-sqlalchemy0.7
-BuildRequires:    python-webob1.0
 
 %description      doc
 OpenStack Image Service (code-named Glance) provides discovery, registration,
@@ -107,18 +103,52 @@ and delivery services for virtual disk images.
 This package contains documentation files for glance.
 
 %prep
-%setup -q -n glance-%{version}
+%setup -q -n glance-%{version}.g3
 
-%patch01 -p1
-%patch02 -p1
+%patch0001 -p1
 
-%patch100 -p1 -b .newdeps
+%patch100 -p1
+%patch101 -p1
 
-sed -i 's|\(sql_connection = sqlite:///\)\(glance.sqlite\)|\1%{_sharedstatedir}/glance/\2|' etc/glance-registry.conf
-
-sed -i '/\/usr\/bin\/env python/d' glance/common/config.py glance/registry/db/migrate_repo/manage.py
+# Remove bundled egg-info
+rm -rf glance.egg-info
+sed -i '/\/usr\/bin\/env python/d' glance/common/config.py glance/common/crypt.py glance/db/sqlalchemy/migrate_repo/manage.py
+# versioninfo is missing in f3 tarball
+echo %{version} > glance/versioninfo
 
 %build
+
+# Change the default config
+openstack-config --set etc/glance-registry.conf DEFAULT sql_connection mysql://glance:glance@localhost/glance
+openstack-config --set etc/glance-api.conf DEFAULT sql_connection mysql://glance:glance@localhost/glance
+# Move authtoken configuration out of paste.ini
+openstack-config --del etc/glance-api-paste.ini filter:authtoken admin_tenant_name
+openstack-config --del etc/glance-api-paste.ini filter:authtoken admin_user
+openstack-config --del etc/glance-api-paste.ini filter:authtoken admin_password
+openstack-config --del etc/glance-api-paste.ini filter:authtoken auth_host
+openstack-config --del etc/glance-api-paste.ini filter:authtoken auth_port
+openstack-config --del etc/glance-api-paste.ini filter:authtoken auth_protocol
+#openstack-config --set etc/glance-api.conf paste_deploy flavor keystone
+openstack-config --set etc/glance-api.conf keystone_authtoken admin_tenant_name %%SERVICE_TENANT_NAME%%
+openstack-config --set etc/glance-api.conf keystone_authtoken admin_user %SERVICE_USER%
+openstack-config --set etc/glance-api.conf keystone_authtoken admin_password %SERVICE_PASSWORD%
+openstack-config --set etc/glance-api.conf keystone_authtoken auth_host 127.0.0.1
+openstack-config --set etc/glance-api.conf keystone_authtoken auth_port 35357
+openstack-config --set etc/glance-api.conf keystone_authtoken auth_protocol http
+openstack-config --del etc/glance-registry-paste.ini filter:authtoken admin_tenant_name
+openstack-config --del etc/glance-registry-paste.ini filter:authtoken admin_user
+openstack-config --del etc/glance-registry-paste.ini filter:authtoken admin_password
+openstack-config --del etc/glance-registry-paste.ini filter:authtoken auth_host
+openstack-config --del etc/glance-registry-paste.ini filter:authtoken auth_port
+openstack-config --del etc/glance-registry-paste.ini filter:authtoken auth_protocol
+#openstack-config --set etc/glance-registry.conf paste_deploy flavor keystone
+openstack-config --set etc/glance-registry.conf keystone_authtoken admin_tenant_name %%SERVICE_TENANT_NAME%%
+openstack-config --set etc/glance-registry.conf keystone_authtoken admin_user %SERVICE_USER%
+openstack-config --set etc/glance-registry.conf keystone_authtoken admin_password %SERVICE_PASSWORD%
+openstack-config --set etc/glance-registry.conf keystone_authtoken auth_host 127.0.0.1
+openstack-config --set etc/glance-registry.conf keystone_authtoken auth_port 35357
+openstack-config --set etc/glance-registry.conf keystone_authtoken auth_protocol http
+
 %{__python} setup.py build
 
 %install
@@ -126,6 +156,10 @@ sed -i '/\/usr\/bin\/env python/d' glance/common/config.py glance/registry/db/mi
 
 # Delete tests
 rm -fr %{buildroot}%{python_sitelib}/tests
+
+# Drop old glance CLI it has been deprecated
+# and replaced glanceclient
+rm -f %{buildroot}%{_bindir}/glance
 
 export PYTHONPATH="$( pwd ):$PYTHONPATH"
 pushd doc
@@ -139,19 +173,33 @@ popd
 # Fix hidden-file-or-dir warnings
 rm -fr doc/build/html/.doctrees doc/build/html/.buildinfo
 rm -f %{buildroot}%{_sysconfdir}/glance*.conf
+rm -f %{buildroot}%{_sysconfdir}/glance*.ini
 rm -f %{buildroot}%{_sysconfdir}/logging.cnf.sample
-rm -f %{buildroot}/usr/share/doc/glance/README
+rm -f %{buildroot}%{_sysconfdir}/policy.json
+rm -f %{buildroot}%{_sysconfdir}/schema-image.json
+rm -f %{buildroot}/usr/share/doc/glance/README.rst
 
 # Setup directories
+install -d -m 755 %{buildroot}%{_datadir}/glance
 install -d -m 755 %{buildroot}%{_sharedstatedir}/glance/images
 
 # Config file
-install -p -D -m 644 etc/glance-api.conf %{buildroot}%{_sysconfdir}/glance/glance-api.conf
-install -p -D -m 644 etc/glance-registry.conf %{buildroot}%{_sysconfdir}/glance/glance-registry.conf
+install -p -D -m 640 etc/glance-api.conf %{buildroot}%{_sysconfdir}/glance/glance-api.conf
+install -p -D -m 640 etc/glance-api-paste.ini %{buildroot}%{_sysconfdir}/glance/glance-api-paste.ini
+install -p -D -m 640 etc/glance-registry.conf %{buildroot}%{_sysconfdir}/glance/glance-registry.conf
+install -p -D -m 640 etc/glance-registry-paste.ini %{buildroot}%{_sysconfdir}/glance/glance-registry-paste.ini
+install -p -D -m 640 etc/glance-cache.conf %{buildroot}%{_sysconfdir}/glance/glance-cache.conf
+install -p -D -m 640 etc/glance-scrubber.conf %{buildroot}%{_sysconfdir}/glance/glance-scrubber.conf
+install -p -D -m 640 etc/policy.json %{buildroot}%{_sysconfdir}/glance/policy.json
+install -p -D -m 640 etc/schema-image.json %{buildroot}%{_sysconfdir}/glance/schema-image.json
 
 # Initscripts
 install -p -D -m 755 %{SOURCE1} %{buildroot}%{_initrddir}/openstack-glance-api
 install -p -D -m 755 %{SOURCE2} %{buildroot}%{_initrddir}/openstack-glance-registry
+
+# Install upstart jobs examples
+install -p -m 644 %{SOURCE100} %{buildroot}%{_datadir}/glance/
+install -p -m 644 %{SOURCE200} %{buildroot}%{_datadir}/glance/
 
 # Logrotate config
 install -p -D -m 644 %{SOURCE3} %{buildroot}%{_sysconfdir}/logrotate.d/openstack-glance
@@ -182,37 +230,96 @@ if [ $1 = 0 ] ; then
 fi
 
 %files
-%doc README
-%{_bindir}/glance
+%doc README.rst
 %{_bindir}/glance-api
 %{_bindir}/glance-control
 %{_bindir}/glance-manage
 %{_bindir}/glance-registry
-%{_bindir}/glance-upload
+%{_bindir}/glance-cache-cleaner
+%{_bindir}/glance-cache-manage
 %{_bindir}/glance-cache-prefetcher
 %{_bindir}/glance-cache-pruner
-%{_bindir}/glance-cache-reaper
 %{_bindir}/glance-scrubber
+%{_bindir}/glance-replicator
 %{_initrddir}/openstack-glance-api
 %{_initrddir}/openstack-glance-registry
-%{_mandir}/man1/glance-*.1.gz
+%dir %{_datadir}/glance
+%{_datadir}/glance/openstack-glance-api.upstart
+%{_datadir}/glance/openstack-glance-registry.upstart
+%{_mandir}/man1/glance*.1.gz
 %dir %{_sysconfdir}/glance
-%config(noreplace) %{_sysconfdir}/glance/glance-api.conf
-%config(noreplace) %{_sysconfdir}/glance/glance-registry.conf
-%config(noreplace) %{_sysconfdir}/logrotate.d/openstack-glance
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/glance-api.conf
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/glance-api-paste.ini
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/glance-registry.conf
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/glance-registry-paste.ini
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/glance-cache.conf
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/glance-scrubber.conf
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/policy.json
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/glance/schema-image.json
+%config(noreplace) %attr(-, root, glance) %{_sysconfdir}/logrotate.d/openstack-glance
 %dir %attr(0755, glance, nobody) %{_sharedstatedir}/glance
 %dir %attr(0755, glance, nobody) %{_localstatedir}/log/glance
 %dir %attr(0755, glance, nobody) %{_localstatedir}/run/glance
 
 %files -n python-glance
-%doc README
+%doc README.rst
 %{python_sitelib}/glance
-%{python_sitelib}/glance-%{version}-*.egg-info
+%{python_sitelib}/glance-%{version}*.egg-info
+
 
 %files doc
 %doc doc/build/html
 
 %changelog
+* Mon Feb 25 2013 Nikola Đipanov <ndipanov@redhat.com> 2013.1-0.3.g3
+- Update to Grizzlt milestone 3
+
+* Fri Jan 11 2013 Nikola Đipanov <ndipanov@redhat.com> 2013.1-0.2.g2
+- Update to Grizzly milestone 2
+
+* Fri Nov 23 2012 Pádraig Brady <P@draigBrady.com> 2013.1-0.1.g1
+- Update to Grizzlt milestone 1
+
+* Fri Nov  9 2012 Pádraig Brady <P@draigBrady.com> 2012.2-4
+- Fix Glance Authentication bypass for image deletion (CVE-2012-4573)
+
+* Thu Sep 27 2012 Alan Pevec <apevec@redhat.com> 2012.2-2
+- Update to folsom final
+
+* Mon Jul  9 2012 Pádraig Brady <P@draigBrady.com> - 2012.1.1-1
+- Update to stable/essex 2012.1.1
+- Remove world readable bit on sensitive config files
+- Include optional upstart jobs
+
+* Tue May 22 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-10
+- Fix an issue with glance-manage db_sync (#823702)
+
+* Mon May 21 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-8
+- Sync with essex stable
+- Don't auto create database on service start
+- Remove openstack-glance-db-setup. use openstack-db instead
+
+* Fri May 18 2012 Alan Pevec <apevec@redhat.com> - 2012.1-7
+- Drop hard dep on python-kombu, notifications are configurable
+
+* Tue May 01 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-6
+- Start the services later in the boot sequence
+
+* Wed Apr 25 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-5
+- Use parallel installed versions of python-routes and python-paste-deploy
+
+* Wed Apr 25 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-4
+- Fix leak of swift objects on deletion
+
+* Tue Apr 10 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-3
+- Fix db setup script to correctly start mysqld
+
+* Tue Apr 10 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-2
+- Fix startup failure due to a file ownership issue (#811130)
+
+* Mon Apr  9 2012 Pádraig Brady <P@draigBrady.com> - 2012.1-1
+- Update to Essex final
+
 * Mon Feb 13 2012 Russell Bryant <rbryant@redhat.com> - 2011.3.1-3
 - Add dependency on python-crypto. (rhbz#789943)
 
