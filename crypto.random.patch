@@ -7,10 +7,9 @@ but I'm leaving that as is for now:
 http://www.codekoala.com/blog/2009/aes-encryption-python-using-pycrypto/#comment-25921785
 http://eli.thegreenplace.net/2010/06/25/aes-encryption-of-files-in-python-with-pycrypto/
 
-diff -Naur glance-2012.1.orig/glance/common/crypt.py glance-2012.1/glance/common/crypt.py
---- glance-2012.1.orig/glance/common/crypt.py	2012-03-30 13:12:40.000000000 +0000
-+++ glance-2012.1/glance/common/crypt.py	2012-04-09 01:46:38.244937150 +0000
-@@ -21,10 +21,7 @@
+--- glance/common/crypt.py	2013-03-05 16:09:52.613820202 -0500
++++ glance/common/crypt.py	2013-03-05 16:11:05.040820180 -0500
+@@ -21,11 +21,8 @@
  """
  
  import base64
@@ -18,9 +17,11 @@ diff -Naur glance-2012.1.orig/glance/common/crypt.py glance-2012.1/glance/common
  from Crypto.Cipher import AES
 -from Crypto import Random
 -from Crypto.Random import random
- 
+-
++import os
  
  def urlsafe_encrypt(key, plaintext, blocksize=16):
+     """
 @@ -41,13 +38,12 @@
          Pads text to be encrypted
          """
