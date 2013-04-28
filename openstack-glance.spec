@@ -103,7 +103,7 @@ and delivery services for virtual disk images.
 This package contains documentation files for glance.
 
 %prep
-%setup -q -n glance-%{version}.g3
+%setup -q -n glance-%{version}
 
 %patch0001 -p1
 
